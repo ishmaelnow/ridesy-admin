@@ -9,6 +9,7 @@
   </head>
 
   <body>
+    <script>if('serviceWorker'in navigator)navigator.serviceWorker.getRegistrations().then(r=>r.forEach(s=>s.unregister()));</script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
