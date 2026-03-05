@@ -37,7 +37,7 @@ export default function Auth() {
       if (error) {
         toast.error(error);
       } else {
-        navigate(isAdmin ? "/admin" : isDriver ? "/driver" : "/rider");
+        navigate("/admin");
       }
     }
     setSubmitting(false);
