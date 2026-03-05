@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { ArrowLeft, Check, X, Clock, Eye } from "lucide-react";
+import { ArrowLeft, Check, X, Eye, UserPlus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -23,15 +23,26 @@ interface Application {
   created_at: string;
 }
 
+interface AdminUser {
+  role_id: string;
+  user_id: string;
+  full_name: string | null;
+  email: string | null;
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { user, hasRole } = useAuth();
+  const [tab, setTab] = useState<"applications" | "admins">("applications");
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Application | null>(null);
   const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("pending");
   const [rejectTarget, setRejectTarget] = useState<Application | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [admins, setAdmins] = useState<AdminUser[]>([]);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [addingAdmin, setAddingAdmin] = useState(false);
 
   useEffect(() => {
     if (!hasRole("admin")) {
@@ -39,7 +50,59 @@ export default function AdminDashboard() {
       return;
     }
     fetchApps();
+    fetchAdmins();
   }, [hasRole, navigate]);
+
+  const fetchAdmins = async () => {
+    const { data } = await supabase
+      .from("user_roles")
+      .select("id, user_id, profiles(full_name, email)")
+      .eq("role", "admin" as any);
+    if (data) {
+      setAdmins(data.map((r: any) => ({
+        role_id: r.id,
+        user_id: r.user_id,
+        full_name: r.profiles?.full_name ?? null,
+        email: r.profiles?.email ?? null,
+      })));
+    }
+  };
+
+  const addAdmin = async () => {
+    if (!adminEmail.trim()) return;
+    setAddingAdmin(true);
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("email", adminEmail.trim().toLowerCase())
+      .maybeSingle();
+    if (!profile) {
+      toast.error("No user found with that email");
+      setAddingAdmin(false);
+      return;
+    }
+    const { error } = await supabase
+      .from("user_roles")
+      .insert({ user_id: profile.id, role: "admin" as any });
+    if (error) {
+      toast.error(error.code === "23505" ? "User is already an admin" : error.message);
+    } else {
+      toast.success(`${profile.full_name ?? adminEmail} is now an admin`);
+      setAdminEmail("");
+      fetchAdmins();
+    }
+    setAddingAdmin(false);
+  };
+
+  const removeAdmin = async (roleId: string, targetUserId: string) => {
+    if (targetUserId === user?.id) {
+      toast.error("You cannot remove yourself");
+      return;
+    }
+    await supabase.from("user_roles").delete().eq("id", roleId);
+    fetchAdmins();
+    toast.success("Admin access removed");
+  };
 
   const fetchApps = async () => {
     const { data, error } = await supabase
@@ -117,10 +180,70 @@ export default function AdminDashboard() {
           <button onClick={() => navigate("/")} className="p-2 -ml-2">
             <ArrowLeft className="w-5 h-5 text-foreground" />
           </button>
-          <h1 className="text-lg font-semibold text-foreground">Admin — Driver Applications</h1>
+          <h1 className="text-lg font-semibold text-foreground">Admin Dashboard</h1>
+        </div>
+        {/* Main tabs */}
+        <div className="flex gap-2 mt-3">
+          {(["applications", "admins"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                tab === t ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"
+              }`}
+            >
+              {t === "applications" ? "Driver Applications" : "Admin Users"}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* Admin Users tab */}
+      {tab === "admins" && (
+        <div className="px-4 py-4 space-y-4">
+          <div className="flex gap-2">
+            <input
+              type="email"
+              placeholder="User email address"
+              value={adminEmail}
+              onChange={(e) => setAdminEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addAdmin()}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            <button
+              onClick={addAdmin}
+              disabled={addingAdmin || !adminEmail.trim()}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+            >
+              <UserPlus className="w-4 h-4" />
+              Add
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">The user must already have an account. Enter their email to grant admin access.</p>
+          <div className="space-y-2">
+            {admins.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No admin users yet</p>
+            ) : admins.map((a) => (
+              <div key={a.role_id} className="flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">{a.full_name ?? "—"}</p>
+                  <p className="text-xs text-muted-foreground">{a.email ?? a.user_id}</p>
+                </div>
+                {a.user_id !== user?.id && (
+                  <button onClick={() => removeAdmin(a.role_id, a.user_id)} className="p-1.5 text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                {a.user_id === user?.id && (
+                  <span className="text-xs text-muted-foreground">You</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "applications" && <>
       {/* Filter tabs */}
       <div className="flex gap-2 px-4 py-3 overflow-x-auto">
         {(["pending", "approved", "rejected", "all"] as const).map((f) => (
@@ -191,6 +314,8 @@ export default function AdminDashboard() {
           ))
         )}
       </div>
+
+      </>}
 
       {/* Rejection reason modal */}
       <AnimatePresence>
